@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Generated journal index (rebuilt from entries/ on every run)
+journal_index.db

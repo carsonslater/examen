@@ -1,7 +1,7 @@
 [project]
 name = "examen"
 version = "0.1.0"
-description = "Add your description here"
+description = "A command-line tool for daily Examen journaling with full-text search"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = []
