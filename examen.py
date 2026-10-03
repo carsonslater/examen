@@ -3,6 +3,7 @@
 # ///
 
 import os
+import re
 import subprocess
 import sys
 import sqlite3
@@ -75,7 +76,7 @@ Tags: #examen
 - [ ] Hurt
 
 
-## What common themes did you discover as you relfected on the last 24-48 hours?
+## What common themes did you discover as you reflected on the last 24-48 hours?
 
 
 ## What habits and patterns do you want to continue to see in your life? What habits and patterns do you want to change or stop?
@@ -164,6 +165,99 @@ def open_file_in_editor(filepath):
         subprocess.run(["xdg-open", filepath])
 
 
+# Placeholder fields render differently in every entry, so they become wildcards
+# when deciding whether a matching line is part of the generated template.
+_TEMPLATE_PLACEHOLDERS = ("{date_str}", "{time_str}", "{default_title}")
+_PLACEHOLDER_SENTINEL = "\x00"
+
+
+def _build_template_line_patterns():
+    """Compiles a regex for each non-empty line of the entry template.
+
+    Lines containing placeholder fields are treated as wildcards so rendered
+    headers (date, time, title) still count as boilerplate.
+    """
+    patterns = []
+    for line in TEMPLATE.splitlines():
+        if not line.strip():
+            continue
+        normalized = line
+        for placeholder in _TEMPLATE_PLACEHOLDERS:
+            normalized = normalized.replace(placeholder, _PLACEHOLDER_SENTINEL)
+        escaped = re.escape(normalized).replace(re.escape(_PLACEHOLDER_SENTINEL), ".*")
+        patterns.append(re.compile(f"^{escaped}$"))
+    return patterns
+
+
+TEMPLATE_LINE_PATTERNS = _build_template_line_patterns()
+
+
+def _is_boilerplate(line):
+    """True if the line comes from the generated entry template."""
+    return any(pattern.match(line) for pattern in TEMPLATE_LINE_PATTERNS)
+
+
+def _matching_snippet(content, query, max_lines=3):
+    """Preview of the query's matching lines, ignoring boilerplate template lines."""
+    query_lower = query.lower()
+    matched = [
+        line.strip()
+        for line in content.splitlines()
+        if line.strip() and query_lower in line.lower() and not _is_boilerplate(line)
+    ]
+    return " | ".join(matched[:max_lines])
+
+
+def search_entries(query):
+    """Searches indexed entry content/filenames and opens a chosen match."""
+    sync_files_to_sql()
+
+    with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        like = f"%{query}%"
+        cursor.execute(
+            """
+            SELECT filepath, filename, content
+            FROM journal_files
+            WHERE content LIKE ? OR filename LIKE ?
+            ORDER BY filename DESC
+            """,
+            (like, like),
+        )
+        rows = cursor.fetchall()
+
+    query_lower = query.lower()
+    matches = []
+    for filepath, filename, content in rows:
+        snippet = _matching_snippet(content, query)
+        # A hit inside the boilerplate template alone isn't a real match.
+        if snippet or query_lower in filename.lower():
+            matches.append((filepath, filename, snippet))
+
+    if not matches:
+        print(f"🔍 No entries found matching '{query}' outside the entry template.")
+        return
+
+    count = len(matches)
+    print(f"🔍 Found {count} entr{'y' if count == 1 else 'ies'} matching '{query}':\n")
+    for i, (_, filename, snippet) in enumerate(matches, start=1):
+        print(f"  [{i}] {filename}")
+        if snippet:
+            print(f"      {snippet}")
+
+    choice = input("\nOpen which entry? (number, or Enter to cancel): ").strip()
+    if not choice:
+        print("Cancelled.")
+        return
+    if not choice.isdigit() or not 1 <= int(choice) <= count:
+        print(f"⚠️ Invalid selection: '{choice}'.")
+        return
+
+    filepath = matches[int(choice) - 1][0]
+    print(f"📖 Opening: {filepath}")
+    open_file_in_editor(filepath)
+
+
 def create_and_open_entry():
     """Generates a new text file from the template and opens it."""
     initialize_system()
@@ -202,6 +296,15 @@ if __name__ == "__main__":
         print("🔄 Running manual journal synchronization...")
         sync_files_to_sql()
         print("✅ Sync complete.")
+    elif len(sys.argv) > 1 and sys.argv[1] == "--search":
+        if len(sys.argv) < 3 or not sys.argv[2].strip():
+            print('⚠️ Usage: examen.py --search "your search term"')
+            sys.exit(1)
+        search_entries(sys.argv[2])
+    elif len(sys.argv) > 1 and sys.argv[1].startswith("-"):
+        print(f"⚠️ Unknown option: {sys.argv[1]}")
+        print('Usage: examen.py [--sync | --search "term"]')
+        sys.exit(1)
     else:
         # Default behavior: generate file and open editor
         create_and_open_entry()
