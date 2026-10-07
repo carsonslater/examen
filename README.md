@@ -36,6 +36,19 @@ With no arguments, `examen.py` generates an entry for the current date and time.
 If a file already exists for that timestamp it is opened rather than overwritten.
 Unknown options print a usage message and exit instead of silently creating an entry.
 
+### Where entries are stored
+
+Entries are grouped into one folder per month, named `YYYYMM`:
+
+```
+entries/202610/2026-10-03_10-13.md
+entries/202610/2026-10-21_07-05.md
+entries/202611/2026-11-02_21-40.md
+```
+
+The indexer walks `entries/` recursively, so a flat layout from an older version
+still works.
+
 ### How search behaves
 
 - Matching is case-insensitive and covers both the entry text and the filename.
@@ -53,8 +66,20 @@ Unknown options print a usage message and exit instead of silently creating an e
 | Path | Purpose |
 | --- | --- |
 | `examen.py` | The CLI: entry template, indexer, and search. |
-| `entries/` | Your Markdown journal entries, one file per session. |
+| `entries/YYYYMM/` | Your Markdown journal entries, one file per session, grouped by month. |
+| `tests/` | Pytest suite for argument parsing, search, and indexing. |
 | `journal_index.db` | SQLite index of entry contents, refreshed on each run. Generated locally and gitignored. |
+
+`entries/` and `journal_index.db` are gitignored: both hold the full text of your
+journal, so they stay on your machine. Note that earlier commits did include an
+entry file and the index; gitignoring only affects future commits, it does not
+remove them from history.
+
+## Running the tests
+
+```bash
+uv run pytest
+```
 
 ## Customizing the template
 

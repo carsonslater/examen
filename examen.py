@@ -106,42 +106,54 @@ def initialize_system():
         conn.commit()
 
 
+def _iter_entry_files():
+    """Yields (filepath, filename) for each entry file under JOURNAL_DIR.
+
+    Entries live one level deep in per-month folders (e.g. entries/202610/),
+    but the walk is recursive so an older flat layout stays indexed too.
+    """
+    if not os.path.isdir(JOURNAL_DIR):
+        return
+    for root, _dirs, filenames in os.walk(JOURNAL_DIR):
+        for filename in sorted(filenames):
+            if filename.endswith((".txt", ".md")):
+                yield os.path.join(root, filename), filename
+
+
 def sync_files_to_sql():
-    """Scans the entries directory and syncs text files into SQLite."""
+    """Scans the entries directory tree and syncs text files into SQLite."""
     initialize_system()
 
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
         current_files = []
 
-        for filename in os.listdir(JOURNAL_DIR):
-            if filename.endswith((".txt", ".md")):
-                filepath = os.path.join(JOURNAL_DIR, filename)
-                current_files.append(filepath)
+        for filepath, filename in _iter_entry_files():
+            current_files.append(filepath)
 
-                mtime = os.path.getmtime(filepath)
+            mtime = os.path.getmtime(filepath)
 
-                # Check if file needs an index update
-                cursor.execute(
-                    "SELECT last_modified FROM journal_files WHERE filepath = ?",
-                    (filepath,),
-                )
-                row = cursor.fetchone()
+            # Check if file needs an index update
+            cursor.execute(
+                "SELECT last_modified FROM journal_files WHERE filepath = ?",
+                (filepath,),
+            )
+            row = cursor.fetchone()
 
-                if row is None or row[0] < mtime:
-                    try:
-                        with open(filepath, "r", encoding="utf-8") as f:
-                            content = f.read()
+            if row is None or row[0] < mtime:
+                try:
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        content = f.read()
 
-                        cursor.execute(
-                            """
-                            INSERT OR REPLACE INTO journal_files (filepath, last_modified, filename, content)
-                            VALUES (?, ?, ?, ?)
-                        """,
-                            (filepath, mtime, filename, content),
-                        )
-                    except Exception as e:
-                        print(f"⚠️ Error reading {filename}: {e}")
+                    cursor.execute(
+                        """
+                        INSERT OR REPLACE INTO journal_files (filepath, last_modified, filename, content)
+                        VALUES (?, ?, ?, ?)
+                    """,
+                        (filepath, mtime, filename, content),
+                    )
+                except Exception as e:
+                    print(f"⚠️ Error reading {filename}: {e}")
 
         # Clean up database records for files deleted manually from disk
         cursor.execute("SELECT filepath FROM journal_files")
@@ -258,6 +270,12 @@ def search_entries(query):
     open_file_in_editor(filepath)
 
 
+def month_dir(moment=None):
+    """Returns the per-month folder for a date, e.g. entries/202610."""
+    moment = moment or datetime.now()
+    return os.path.join(JOURNAL_DIR, moment.strftime("%Y%m"))
+
+
 def create_and_open_entry():
     """Generates a new text file from the template and opens it."""
     initialize_system()
@@ -266,9 +284,13 @@ def create_and_open_entry():
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H-%M")
 
+    # Entries are grouped into a folder per month, e.g. entries/202610/
+    entry_dir = month_dir(now)
+    os.makedirs(entry_dir, exist_ok=True)
+
     # Create a unique, descriptive file name
     filename = f"{date_str}_{time_str}.md"
-    filepath = os.path.join(JOURNAL_DIR, filename)
+    filepath = os.path.join(entry_dir, filename)
 
     # Only write file if it doesn't already exist to prevent accidental overwrites
     if not os.path.exists(filepath):
@@ -290,21 +312,32 @@ def create_and_open_entry():
     sync_files_to_sql()
 
 
-if __name__ == "__main__":
-    # If arguments are passed, we handle utility features like syncing
-    if len(sys.argv) > 1 and sys.argv[1] == "--sync":
+def main(argv=None):
+    """Dispatches the command line. Returns a process exit code."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    if argv and argv[0] == "--sync":
         print("🔄 Running manual journal synchronization...")
         sync_files_to_sql()
         print("✅ Sync complete.")
-    elif len(sys.argv) > 1 and sys.argv[1] == "--search":
-        if len(sys.argv) < 3 or not sys.argv[2].strip():
+        return 0
+
+    if argv and argv[0] == "--search":
+        if len(argv) < 2 or not argv[1].strip():
             print('⚠️ Usage: examen.py --search "your search term"')
-            sys.exit(1)
-        search_entries(sys.argv[2])
-    elif len(sys.argv) > 1 and sys.argv[1].startswith("-"):
-        print(f"⚠️ Unknown option: {sys.argv[1]}")
+            return 1
+        search_entries(argv[1])
+        return 0
+
+    if argv and argv[0].startswith("-"):
+        print(f"⚠️ Unknown option: {argv[0]}")
         print('Usage: examen.py [--sync | --search "term"]')
-        sys.exit(1)
-    else:
-        # Default behavior: generate file and open editor
-        create_and_open_entry()
+        return 1
+
+    # Default behavior: generate a new entry and open it in the editor
+    create_and_open_entry()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
