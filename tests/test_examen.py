@@ -222,7 +222,9 @@ def test_search_reports_matches_outside_the_template(journal, monkeypatch, capsy
     assert "Wired money and rewired the search flag." in out
 
 
-def test_search_ignores_entries_matching_only_the_template(journal, monkeypatch, capsys):
+def test_search_ignores_entries_matching_only_the_template(
+    journal, monkeypatch, capsys
+):
     write_entry(journal, "202610/2026-10-03_10-13.md", TEMPLATE_ONLY_ENTRY)
     no_prompt(monkeypatch)
 
